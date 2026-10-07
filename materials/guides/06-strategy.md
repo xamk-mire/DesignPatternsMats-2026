@@ -4,9 +4,9 @@
 
 ## Chapter 6: "Shipping quotes at CartNest"
 
-**CartNest** checkout must price shipping: **standard**, **express**, and **economy**. The first build stuffed every formula into `CheckoutService` with `if method == ...`. Finance asked for “green shipping” and three developers collided in the same method.
+A customer checks out a 2 kg parcel going 100 km on **CartNest**. Checkout must price **standard**, **express**, and **economy**. The first `CheckoutService` does every formula itself with `if method == ...`. Finance asks for **green** and that method breaks.
 
-You need **Strategy**: interchangeable algorithms behind one interface.
+You need **Strategy**: interchangeable algorithms behind one interface. Checkout holds one strategy and calls `quote`.
 
 *Head First Design Patterns* introduces Strategy in Chapter 1. Refactoring Guru: ([Strategy](https://refactoring.guru/design-patterns/strategy)).
 
@@ -40,7 +40,7 @@ The recurring issue: **algorithms and selection logic are fused**. The context k
 
 ### Analogy — GPS routing apps
 
-You open a navigation app and tap “Navigate to the airport.” The UI stays the same; behind the scenes you pick a **route strategy**: fastest, avoid tolls, scenic, or eco-friendly. Each strategy computes a path differently using the same map data. Switching strategies does not rewrite the “start navigation” button—it swaps the engine plugged into a stable shell.
+You open a navigation app and tap “Navigate to the airport.” The UI stays the same; behind the scenes you pick a **route strategy**: fastest, avoid tolls, scenic, or eco-friendly. Each strategy computes a path differently using the same map data. Switching strategies does not rewrite the “start navigation” button—it swaps the engine plugged into a stable shell. Swapping green shipping for express does not rewrite CartNest checkout either; it swaps the formula plugged into `CheckoutService`.
 
 In software, the **context** is the navigation shell; each **strategy** is a route algorithm selected by configuration or user choice.
 
@@ -59,10 +59,10 @@ The context should not contain `if conservative ... elif aggressive ...` for the
 
 ```mermaid
 sequenceDiagram
-  participant Client
+  participant Client as Customer
   participant Context as CheckoutService
-  participant Strategy
-  Client->>Context: quote(parcel, method)
+  participant Strategy as ShippingStrategy
+  Client->>Context: quote(parcel)
   Context->>Strategy: quote(parcel)
   Strategy-->>Context: price
   Context-->>Client: price
@@ -94,18 +94,20 @@ Swapping strategy means injecting a different object—often at startup, per req
 
 # Part 2 — Follow along
 
-> **Follow along:** Stdlib Python only. Run the problem demo, then the complete strategy script.
+> **Follow along:** Stdlib Python only. Run the problem demo first, then the complete strategy script.
 
 ## 1. The sticky problem
 
-### 1.1 Smell: algorithms trapped in conditionals
+Same afternoon. The customer is still at the counter. Checkout has no separate formulas, so the clerk does the arithmetic in one method.
+
+### 1.1 Smell: the clerk prices every method
 
 ```python
-# Smell: every new shipping method edits this hotspot
+# The clerk does every formula at the counter. A new method means editing this method.
 if method == "standard":
     return 5.0 + 0.02 * parcel.distance_km
 if method == "express":
-    return 12.0 + ...
+    return 12.0 + 0.05 * parcel.distance_km + 0.5 * parcel.weight_kg
 ```
 
 **Root cause:** Algorithms and selection live in one class.
@@ -115,7 +117,7 @@ if method == "express":
 > **Follow along:** Save as `cartnest_before.py`, run `python cartnest_before.py`.
 
 ```python
-"""Problem demo: shipping formulas buried in if/elif."""
+"""Monday afternoon at CartNest. Checkout prices every method itself."""
 
 from dataclasses import dataclass
 
@@ -127,7 +129,10 @@ class Parcel:
 
 
 class CheckoutService:
+    """Context, still fused to every formula. There is no strategy object yet."""
+
     def shipping_quote(self, parcel: Parcel, method: str) -> float:
+        # Selection and arithmetic share one method. Green has nowhere to go.
         if method == "standard":
             return 5.0 + 0.02 * parcel.distance_km
         if method == "express":
@@ -140,10 +145,11 @@ class CheckoutService:
 if __name__ == "__main__":
     parcel = Parcel(weight_kg=2, distance_km=100)
     svc = CheckoutService()
-    print("standard:", svc.shipping_quote(parcel, "standard"))
-    print("express:", svc.shipping_quote(parcel, "express"))
+    print("A customer checks out a 2 kg parcel, 100 km away.")
+    print(f"Checkout itself prices standard: {svc.shipping_quote(parcel, 'standard')}")
+    print(f"Checkout itself prices express: {svc.shipping_quote(parcel, 'express')}")
     try:
-        print(svc.shipping_quote(parcel, "green"))
+        svc.shipping_quote(parcel, "green")
     except ValueError as exc:
         print(f"PAIN: {exc} — adding green means editing CheckoutService again")
 ```
@@ -151,31 +157,33 @@ if __name__ == "__main__":
 **Expected output (problem):**
 
 ```text
-standard: 7.0
-express: 18.0
+A customer checks out a 2 kg parcel, 100 km away.
+Checkout itself prices standard: 7.0
+Checkout itself prices express: 18.0
 PAIN: green — adding green means editing CheckoutService again
 ```
 
 ### What goes wrong when requirements change
 
-Every new method is a merge conflict in one function. Testing one formula requires constructing the whole checkout service.
+Ask for green, and you edit `CheckoutService` again. Two developers cannot add two formulas without colliding in the same method.
 
 ---
 
 ## 2. Pattern in practice
 
-The CartNest runnable example below moves shipping formulas into `ShippingStrategy` implementations; `CheckoutService` only selects a strategy and delegates `quote()`.
+The formulas leave the counter. Each one stands as its own strategy. Checkout only asks for a price.
 
 ---
 
 ## 3. Building the solution (step by step)
 
-### Step A — Strategy interface + one algorithm
+### Step A — One formula steps out of the method
 
 ```python
 class ShippingStrategy(ABC):
     @abstractmethod
     def quote(self, parcel: Parcel) -> float:
+        """The price the counter asks for — no method name in here."""
         ...
 
 
@@ -184,20 +192,21 @@ class StandardShipping(ShippingStrategy):
         return 5.0 + 0.02 * parcel.distance_km
 ```
 
-### Step B — Context delegates
+### Step B — The counter only asks for a price
 
 ```python
 class CheckoutService:
     def __init__(self, strategy: ShippingStrategy) -> None:
-        self._strategy = strategy
+        self._strategy = strategy  # context holds the strategy; it does not switch on names
 
     def shipping_quote(self, parcel: Parcel) -> float:
-        return self._strategy.quote(parcel)  # no if/elif on method names
+        return self._strategy.quote(parcel)
 ```
 
-### Step C — Selection outside the algorithm
+### Step C — The customer picks a formula outside the counter
 
 ```python
+# Selection stays outside the algorithm. A new method is a new object, not a new branch.
 STRATEGIES = {"standard": StandardShipping(), "express": ExpressShipping(), ...}
 strategy = STRATEGIES[method]
 CheckoutService(strategy).shipping_quote(parcel)
@@ -210,7 +219,7 @@ CheckoutService(strategy).shipping_quote(parcel)
 > **Follow along:** Save as `cartnest_strategy.py`, run `python cartnest_strategy.py`.
 
 ```python
-"""Strategy demo — CartNest shipping quotes (stdlib only)."""
+"""Later that afternoon. Four formulas, one checkout counter (stdlib only)."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -223,12 +232,16 @@ class Parcel:
 
 
 class ShippingStrategy(ABC):
+    """Strategy. The only question checkout asks: what does this parcel cost?"""
+
     @abstractmethod
     def quote(self, parcel: Parcel) -> float:
         ...
 
 
 class StandardShipping(ShippingStrategy):
+    """One formula. It does not know about express, economy, or green."""
+
     def quote(self, parcel: Parcel) -> float:
         return 5.0 + 0.02 * parcel.distance_km
 
@@ -244,12 +257,15 @@ class EconomyShipping(ShippingStrategy):
 
 
 class GreenShipping(ShippingStrategy):
+    """A new formula object. Checkout does not grow an elif for it."""
+
     def quote(self, parcel: Parcel) -> float:
-        # Extension: new class + registry entry — not a new elif in checkout
         return EconomyShipping().quote(parcel) + 1.50
 
 
 class CheckoutService:
+    """Context. It holds a strategy and reads the price aloud."""
+
     def __init__(self, strategy: ShippingStrategy) -> None:
         self._strategy = strategy
 
@@ -269,22 +285,32 @@ STRATEGIES: dict[str, ShippingStrategy] = {
 
 
 def quote_for(method: str, parcel: Parcel) -> float:
+    """Selection lives here, outside CheckoutService.shipping_quote."""
     return CheckoutService(STRATEGIES[method]).shipping_quote(parcel)
 
 
 if __name__ == "__main__":
     parcel = Parcel(weight_kg=2, distance_km=100)
-    for name in ("standard", "express", "economy", "green"):
-        print(f"{name}: {quote_for(name, parcel)}")
+    print("The customer asks for a quote again.")
+    print(f"Standard answers from its own formula: {quote_for('standard', parcel)}")
+    print(f"Express answers from its own formula: {quote_for('express', parcel)}")
+    print(f"Economy answers from its own formula: {quote_for('economy', parcel)}")
+    print(
+        "Green is a new formula, not a new branch in checkout: "
+        + str(quote_for("green", parcel))
+    )
+    print("Checkout never learned the arithmetic.")
 ```
 
 **Expected output (solution):**
 
 ```text
-standard: 7.0
-express: 18.0
-economy: 3.0
-green: 4.5
+The customer asks for a quote again.
+Standard answers from its own formula: 7.0
+Express answers from its own formula: 18.0
+Economy answers from its own formula: 3.0
+Green is a new formula, not a new branch in checkout: 4.5
+Checkout never learned the arithmetic.
 ```
 
 ---
@@ -308,7 +334,7 @@ green: 4.5
 
 ## 7. Try this
 
-Add `OvernightShipping` (flat €25 + €1/kg). Register it, print a quote, re-run. `CheckoutService.shipping_quote` should stay unchanged.
+A midnight truck leaves after the counter closes. Add `OvernightShipping` (flat 25 + 1 per kg). Register it under `"overnight"` and print a quote. `CheckoutService.shipping_quote` stays unchanged. The new formula stays inside the new strategy.
 
 ---
 
