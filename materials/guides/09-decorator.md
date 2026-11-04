@@ -8,7 +8,7 @@ A customer orders an espresso at **DailyPour**. The cup has one method: `Beverag
 
 You need **Decorator**: wrap a component with the same interface, stacking behaviors without a class combinatorial nightmare.
 
-*Head First Design Patterns* Chapter 3. Refactoring Guru: attach new behaviors with wrapper objects ([Decorator](https://refactoring.guru/design-patterns/decorator)).
+_Head First Design Patterns_ Chapter 3. Refactoring Guru: attach new behaviors with wrapper objects ([Decorator](https://refactoring.guru/design-patterns/decorator)).
 
 ---
 
@@ -29,7 +29,7 @@ By the end of this guide you will be able to:
 
 **Decorator** attaches additional responsibilities to an object dynamically. Decorators provide a flexible alternative to subclassing for extending functionality. Each decorator implements the same interface as the component it wraps, delegates to an inner object, and adds behavior before or after the call.
 
-*Head First Design Patterns* covers Decorator in Chapter 3 (the classic coffee example). Refactoring Guru: stack wrappers instead of multiplying subclasses ([Decorator](https://refactoring.guru/design-patterns/decorator)).
+_Head First Design Patterns_ covers Decorator in Chapter 3 (the classic coffee example). Refactoring Guru: stack wrappers instead of multiplying subclasses ([Decorator](https://refactoring.guru/design-patterns/decorator)).
 
 ### The problem in plain language
 
@@ -45,12 +45,12 @@ Decorators are those add-on wrappers for code: same `Beverage.serve()` interface
 
 ### Solution structure
 
-| Role | Responsibility | In Phase 9 lab |
-| ---- | -------------- | -------------- |
-| **Component** | Core interface | `ActuatorPort` |
-| **Concrete component** | Base behavior | Raw actuator adapter |
-| **Decorator** | Implements component; holds inner reference | `LoggingActuatorDecorator` |
-| **Concrete decorators** | Specific cross-cutting policy | max runtime, execution log |
+| Role                    | Responsibility                              | In Phase 9 lab             |
+| ----------------------- | ------------------------------------------- | -------------------------- |
+| **Component**           | Core interface                              | `ActuatorPort`             |
+| **Concrete component**  | Base behavior                               | Raw actuator adapter       |
+| **Decorator**           | Implements component; holds inner reference | `LoggingActuatorDecorator` |
+| **Concrete decorators** | Specific cross-cutting policy               | max runtime, execution log |
 
 Stack at composition root: `MaxRuntimeDecorator(LoggingDecorator(real_actuator))`. **Order matters**—logging outside retry sees every attempt; max runtime outside everything caps total wall time.
 
@@ -84,6 +84,7 @@ Each layer calls `inner.serve()`, then adds its own step.
 - **Adapter** — changes interface; Decorator **keeps** interface and adds behavior.
 - **Chain of Responsibility** — passes along a chain until someone handles; Decorator **always** delegates through the full stack.
 - **Proxy** — controls access (lazy load, remote); structurally similar wrapper, different intent.
+- **Builder** — functionally almost identical, but the purpose is difference. Builder focuses on how an object is constructed, typically step by step and decorator focuses on how and object's behavior is extended without modifying its original class.
 
 ---
 
@@ -287,10 +288,10 @@ Caramel sits outside steamed milk, so the drizzle prints last. Swap the wrappers
 
 ## 5. Compare & contrast
 
-| | Decorator | Adapter (Guide 05) |
-|--|-----------|---------------------|
+|           | Decorator                 | Adapter (Guide 05)            |
+| --------- | ------------------------- | ----------------------------- |
 | Interface | Same as wrapped component | Different (target vs adaptee) |
-| Goal | Add responsibilities | Make incompatible APIs work |
+| Goal      | Add responsibilities      | Make incompatible APIs work   |
 
 ---
 
@@ -310,10 +311,10 @@ Wrap so `SteamedMilk` is outside `Caramel`. Re-run. Milk should print after the 
 
 ## Key Terms
 
-| Term | Definition |
-|------|------------|
-| **Decorator** | Structural pattern that wraps a component with the same interface |
-| **Composition** | Building behavior by wrapping rather than subclassing |
+| Term            | Definition                                                        |
+| --------------- | ----------------------------------------------------------------- |
+| **Decorator**   | Structural pattern that wraps a component with the same interface |
+| **Composition** | Building behavior by wrapping rather than subclassing             |
 
 ---
 
@@ -321,7 +322,7 @@ Wrap so `SteamedMilk` is outside `Caramel`. Re-run. Milk should print after the 
 
 **Required:**
 
-- *Head First Design Patterns* — Chapter 3
+- _Head First Design Patterns_ — Chapter 3
 - [Refactoring Guru — Decorator](https://refactoring.guru/design-patterns/decorator)
 - Lab: [Requirements](../../phases/phase-09/requirements.md) · [Guided check](../../phases/phase-09/guided-check.md) · [Questions](../../phases/phase-09/questions.md)
 
@@ -331,13 +332,13 @@ Wrap so `SteamedMilk` is outside `Caramel`. Re-run. Milk should print after the 
 
 Phase 9 stacks cross-cutting policies around an actuator port. Wire the stack in composition roots.
 
-| Teaching (this guide) | Your lab (greenhouse) |
-| --------------------- | --------------------- |
-| `Beverage.serve` | `ActuatorPort` (`apply`) |
-| `Espresso` | Simulation (or vendor) actuator adapter |
+| Teaching (this guide)     | Your lab (greenhouse)                                     |
+| ------------------------- | --------------------------------------------------------- |
+| `Beverage.serve`          | `ActuatorPort` (`apply`)                                  |
+| `Espresso`                | Simulation (or vendor) actuator adapter                   |
 | `SteamedMilk` / `Caramel` | Logging decorator; max-run-time (or lab) policy decorator |
-| Wrapper order | Logging outermost vs policy inner — document it |
-| Console lines | `actuator_execution_log` rows |
+| Wrapper order             | Logging outermost vs policy inner — document it           |
+| Console lines             | `actuator_execution_log` rows                             |
 
 **Do / don’t:** **Do** compose wrappers that share one interface; order matters. **Don’t** nest `if policy` in the router, and don’t give each decorator a different method name.
 
