@@ -64,7 +64,7 @@ class MaxRunTimeActuatorDecorator(ActuatorPort):
     def apply(self, ...): ...  # if running too long → raise; do not call inner
 ```
 
-Compose in the application service / composition root (not in the router with nested `if`). Make order explicit (e.g. logging outermost). Max-run-time may use persisted `actuator_states.updated_at` or a documented clock.
+Compose in the application service / composition root (not in the router with nested `if`). Order is logging, then max-run-time, then `SimulationActuatorAdapter`. Max-run-time blocks when state is `running` and `actuator_states.updated_at` is at least 30 minutes old. The command string is not checked in this phase; Phase 10 consults `allowed_commands`.
 
 **Check:** blocked policy does not call inner (prove in a test); failed policy still writes `success=false` with policy name in JSON.
 
@@ -73,6 +73,18 @@ Compose in the application service / composition root (not in the router with ne
 ## Step 3 — API and UI
 
 `GET /api/actuators/executions?limit=20`
+
+Success, including an unknown command on an idle actuator:
+
+```json
+{
+  "success": true,
+  "policy_applied": ["logging"],
+  "message": null
+}
+```
+
+Blocked after the actuator has been `running` for 30 minutes:
 
 ```json
 {
@@ -85,9 +97,9 @@ Compose in the application service / composition root (not in the router with ne
 }
 ```
 
-Optional apply/demo endpoint until Command. UI table: time, device, success badge, policies, message. Empty state. Tailwind.
+Optional apply/demo endpoint until Command. UI table: time, device, success badge, policies, message. Empty state. Tailwind. Instruction text states that the command is not validated here and that a success row has an empty message.
 
-Demo: force a running state older than the threshold, then apply — expect `success=false` after refresh.
+Demo: set the actuator to `running` and move `updated_at` at least 30 minutes back, then apply — expect `success=false` after refresh.
 
 **Check:** Scalar lists the endpoint; blocked attempt appears in the UI from the table.
 
@@ -112,11 +124,11 @@ Demo: force a running state older than the threshold, then apply — expect `suc
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| Each decorator has a different method name | Share `ActuatorPort.apply` |
-| Log only in stdout | Insert `actuator_execution_log` |
-| Policy `if` in the router | Wrapper classes in the stack |
+| Symptom                                    | Fix                             |
+| ------------------------------------------ | ------------------------------- |
+| Each decorator has a different method name | Share `ActuatorPort.apply`      |
+| Log only in stdout                         | Insert `actuator_execution_log` |
+| Policy `if` in the router                  | Wrapper classes in the stack    |
 
 ---
 

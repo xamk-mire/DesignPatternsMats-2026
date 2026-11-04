@@ -67,14 +67,14 @@ yourpath\project\
 
 ORM `actuator_execution_log`:
 
-| Column | SQL hint |
-|--------|----------|
-| `id` | UUID PK |
-| `device_id` | UUID FK → `devices` |
-| `success` | BOOLEAN |
+| Column           | SQL hint                                                |
+| ---------------- | ------------------------------------------------------- |
+| `id`             | UUID PK                                                 |
+| `device_id`      | UUID FK → `devices`                                     |
+| `success`        | BOOLEAN                                                 |
 | `policy_applied` | JSONB — list of `str` (e.g. `["maxRunTime","logging"]`) |
-| `message` | TEXT, nullable |
-| `created_at` | timestamptz |
+| `message`        | TEXT, nullable                                          |
+| `created_at`     | timestamptz                                             |
 
 Execution DTO JSON: `{ id, device_id, success: bool, policy_applied: string[], message: string \| null, created_at }`.
 
@@ -86,14 +86,14 @@ Execution DTO JSON: `{ id, device_id, success: bool, policy_applied: string[], m
 
 `actuator_execution_log`:
 
-| Column | Intent |
-|--------|--------|
-| Identifier | PK |
-| `device_id` | FK → `devices` |
-| `success` | Boolean |
+| Column           | Intent                    |
+| ---------------- | ------------------------- |
+| Identifier       | PK                        |
+| `device_id`      | FK → `devices`            |
+| `success`        | Boolean                   |
 | `policy_applied` | JSON list of policy names |
-| `message` | Optional text |
-| `created_at` | Timestamptz |
+| `message`        | Optional text             |
+| `created_at`     | Timestamptz               |
 
 Autogenerate and apply.
 
@@ -105,10 +105,14 @@ Acceptance criteria:
 
 Implement:
 
-- Logging decorator — records attempt (may write via a callback/repository injected into the decorator or an application service around `apply`).
-- Max-run-time decorator — rejects apply if the actuator has been `running` beyond a configured duration (use persisted state `updated_at` or a documented clock).
+- Logging decorator — records attempt (may write via a callback/repository injected into the decorator or an application service around `apply`). Logging is outermost.
+- Max-run-time decorator — rejects apply when the persisted state is `running` and `actuator_states.updated_at` is at least 30 minutes before the clock. Do not call the inner adapter. Use `updated_at` as that clock’s comparison point.
 
-Composition order must be explicit (e.g. logging outermost).
+The command string is forwarded to `apply` and is not validated in this phase. An unknown command still succeeds unless max-run-time blocks it. Phase 10 consults `allowed_commands`.
+
+A completed attempt stores `success: true`, `policy_applied: ["logging"]`, and `message: null`. A blocked attempt stores `success: false`, `policy_applied: ["maxRunTime", "logging"]`, and message `Max run time exceeded`.
+
+Composition order is logging, then max-run-time, then `SimulationActuatorAdapter`.
 
 Acceptance criteria:
 
@@ -120,7 +124,7 @@ Acceptance criteria:
 
 - `GET /api/actuators/executions?limit=20` (or equivalent) from the table.
 - Optional apply/demo endpoint until Command phase.
-- **Execution log** UI in a sensible dashboard section (controls or a dedicated block). Tailwind; empty state.
+- **Execution log** UI in a sensible dashboard section (controls or a dedicated block). Tailwind; empty state. Instruction text explains that any command succeeds until the actuator has been `running` for 30 minutes, that a success row has an empty message and policy `logging`, and that a blocked row shows `Max run time exceeded` with policies `maxRunTime` and `logging`.
 
 Acceptance criteria:
 
