@@ -2,9 +2,9 @@
 
 **Lab:** [Requirements](../../phases/phase-09/requirements.md) · [Guided check](../../phases/phase-09/guided-check.md) · [Questions](../../phases/phase-09/questions.md)
 
-## Chapter 9: "Wrapping the HTTP client at ProbeAPI"
+## Chapter 9: "Add-ons at DailyPour"
 
-**ProbeAPI** is an internal HTTP client. Teams keep subclassing into `LoggingHttpClient`, `RetryHttpClient`, `LoggingRetryHttpClient`… Inheritance explodes.
+A customer orders an espresso at **DailyPour**. The cup has one method: `Beverage.serve() -> Cup`. Add-ons—steamed milk, caramel—should wrap that same drink. The first design subclasses `MilkEspresso` and `CaramelEspresso`. Milk plus caramel would need yet another subclass.
 
 You need **Decorator**: wrap a component with the same interface, stacking behaviors without a class combinatorial nightmare.
 
@@ -19,7 +19,7 @@ By the end of this guide you will be able to:
 - State Decorator’s intent
 - Stack cross-cutting behaviors without inheritance explosion
 - Reason about wrapper order
-- Bridge the idea to Phase 9 without copying ProbeAPI types
+- Bridge the idea to Phase 9 without copying DailyPour types
 
 ---
 
@@ -33,7 +33,7 @@ By the end of this guide you will be able to:
 
 ### The problem in plain language
 
-Cross-cutting concerns—logging, retries, timeouts, metrics, authorization—apply to many operations. Subclassing for every combination (`LoggingRetryHttpClient`, `RetryLoggingHttpClient`, …) leads to **combinatorial explosion**. Copy-paste between subclasses drifts. Removing one concern from a stack of inherited classes is painful.
+Cross-cutting concerns—logging, retries, timeouts, metrics, authorization—apply to many operations. Subclassing for every combination leads to **combinatorial explosion**. Copy-paste between subclasses drifts. Removing one concern from a stack of inherited classes is painful.
 
 You need to add behavior **without changing the core component** and **without a new subclass per combination**.
 
@@ -41,7 +41,7 @@ You need to add behavior **without changing the core component** and **without a
 
 You order a simple espresso. Add-ons—extra shot, steamed milk, caramel—wrap the drink: each add-on presents the same “beverage” interface to the cashier and passes the order inward, adding cost and preparation steps. You can stack milk + caramel without inventing a `MilkCaramelEspresso` subclass for every permutation.
 
-Decorators are those add-on wrappers for code: same `request()` interface, extra behavior around the inner client.
+Decorators are those add-on wrappers for code: same `Beverage.serve()` interface, extra behavior around the inner cup.
 
 ### Solution structure
 
@@ -58,12 +58,12 @@ Stack at composition root: `MaxRuntimeDecorator(LoggingDecorator(real_actuator))
 
 ```mermaid
 flowchart LR
-  Client --> Outer[LoggingDecorator]
-  Outer --> Middle[RetryDecorator]
-  Middle --> Core[HttpClient]
+  Customer --> Caramel
+  Caramel --> SteamedMilk
+  SteamedMilk --> Espresso
 ```
 
-Each layer calls `inner.operation(...)`, then returns (possibly modified) results.
+Each layer calls `inner.serve()`, then adds its own step.
 
 ### When to use / when to skip
 
@@ -89,202 +89,199 @@ Each layer calls `inner.operation(...)`, then returns (possibly modified) result
 
 # Part 2 — Follow along
 
-> **Follow along:** Stdlib Python only. Run the problem sketch, then the complete decorator stack.
+> **Follow along:** Stdlib Python only. Run the problem demo first, then the complete decorator stack.
 
 ## 1. The sticky problem
 
-### 1.1 Smell: subclass combinations
+Same morning. The customer is at the counter. There are no wrappers, so each add-on is a new drink class.
+
+### 1.1 Smell: a subclass for every pairing
 
 ```python
-# Smell: each combo of behaviors wants a new subclass
-class LoggingRetryHttpClient(HttpClient):
-    ...  # copy-paste from Logging + Retry
+# Milk plus caramel wants yet another subclass. The pairings multiply.
+class MilkCaramelEspresso(Espresso):
+    ...  # copy-paste from MilkEspresso and CaramelEspresso
 ```
 
 **Root cause:** Behavior combinations grow exponentially with inheritance.
 
 ### 1.2 Runnable problem demo
 
-> **Follow along:** Save as `probeapi_before.py`, run `python probeapi_before.py`.
+> **Follow along:** Save as `dailypour_before.py`, run `python dailypour_before.py`.
 
 ```python
-"""Problem demo: inheritance cannot scale combinations cleanly."""
+"""Monday morning at DailyPour. Each add-on is its own subclass."""
 
 
-class HttpClient:
-    def request(self, method: str, url: str) -> str:
-        return f"{method} {url} -> 200 OK"
+class Espresso:
+    """Concrete component. A plain shot, still trapped under subclasses."""
+
+    def serve(self) -> str:
+        return "espresso"
 
 
-class LoggingHttpClient(HttpClient):
-    def request(self, method: str, url: str) -> str:
-        print("log", method, url)
-        return super().request(method, url)
+class MilkEspresso(Espresso):
+    def serve(self) -> str:
+        # The subclass owns the whole drink. It cannot be stacked with caramel.
+        print("The milk subclass steams milk, then pulls the shot.")
+        return "Espresso with steamed milk — 2.50 EUR"
 
 
-class RetryHttpClient(HttpClient):
-    def request(self, method: str, url: str) -> str:
-        print("retry-capable call")
-        return super().request(method, url)
+class CaramelEspresso(Espresso):
+    def serve(self) -> str:
+        print("The caramel subclass drizzles caramel, then pulls the shot.")
+        return "Espresso with caramel — 2.70 EUR"
 
 
 if __name__ == "__main__":
-    print(LoggingHttpClient().request("GET", "/status"))
-    print(RetryHttpClient().request("GET", "/status"))
-    print("PAIN: need Logging+Retry+Auth? another subclass (or worse, copy-paste)")
+    print("A customer orders an espresso.")
+    print(MilkEspresso().serve())
+    print(CaramelEspresso().serve())
+    print("PAIN: milk plus caramel wants another subclass")
 ```
 
 **Expected output (problem):**
 
 ```text
-log GET /status
-GET /status -> 200 OK
-retry-capable call
-GET /status -> 200 OK
-PAIN: need Logging+Retry+Auth? another subclass (or worse, copy-paste)
+A customer orders an espresso.
+The milk subclass steams milk, then pulls the shot.
+Espresso with steamed milk — 2.50 EUR
+The caramel subclass drizzles caramel, then pulls the shot.
+Espresso with caramel — 2.70 EUR
+PAIN: milk plus caramel wants another subclass
 ```
 
 ### What goes wrong when requirements change
 
-Add auth headers and metrics: subclasses multiply. Order of logging vs retry becomes inconsistent across teams.
+Add an extra shot and the subclasses multiply. The order of milk and caramel becomes inconsistent across the counter.
 
 ---
 
 ## 2. Pattern in practice
 
-The ProbeAPI runnable example below stacks `LoggingDecorator` and `RetryDecorator` around a base HTTP client—same interface, no combinatorial subclasses.
+The add-ons leave the subclasses. Each one wraps the same cup. The counter stacks them.
 
 ---
 
 ## 3. Building the solution (step by step)
 
-### Step A — Shared interface + base decorator
+### Step A — One drink interface, and a wrapper that holds the inner cup
 
 ```python
-class HttpClientDecorator(HttpClient):
-    def __init__(self, inner: HttpClient) -> None:
-        self._inner = inner  # wrap, don't subclass the concrete client tree
+class BeverageDecorator(Beverage):
+    def __init__(self, inner: Beverage) -> None:
+        self._inner = inner  # wrap the cup; do not subclass every pairing
 
-    def request(self, method: str, url: str) -> str:
-        return self._inner.request(method, url)
+    def serve(self) -> Cup:
+        return self._inner.serve()
 ```
 
-### Step B — One behavior per wrapper
+### Step B — One add-on per wrapper
 
 ```python
-class LoggingClient(HttpClientDecorator):
-    def request(self, method: str, url: str) -> str:
-        print(f"HTTP {method} {url}")
-        return super().request(method, url)
+class SteamedMilk(BeverageDecorator):
+    def serve(self) -> Cup:
+        cup = super().serve()  # the inner drink finishes first
+        print("Milk steams into the cup.")
+        return Cup(f"{cup.name}, steamed milk", cup.price_eur + Decimal("0.50"))
 ```
 
-### Step C — Compose at wiring time
+### Step C — The counter stacks the wrappers
 
 ```python
-client: HttpClient = BasicHttpClient()
-client = AuthHeaderClient(client, token="secret-token")
-client = RetryClient(client, attempts=3)
-client = LoggingClient(client)  # outermost sees the logical call
+drink: Beverage = Espresso()
+drink = SteamedMilk(drink)
+drink = Caramel(drink)  # outermost finishes last
 ```
 
 ---
 
 ## 4. Complete worked solution (runnable)
 
-> **Follow along:** Save as `probeapi_decorator.py`, run `python probeapi_decorator.py`.
+> **Follow along:** Save as `dailypour_decorator.py`, run `python dailypour_decorator.py`.
 
 ```python
-"""Decorator demo — ProbeAPI HTTP client stack (stdlib only)."""
+"""Later that morning. Two add-ons, one espresso (stdlib only)."""
 
 from abc import ABC, abstractmethod
-import time
+from dataclasses import dataclass
+from decimal import Decimal
 
 
-class HttpClient(ABC):
+@dataclass(frozen=True)
+class Cup:
+    name: str
+    price_eur: Decimal
+
+
+class Beverage(ABC):
+    """Component. Every add-on presents this same serve()."""
+
     @abstractmethod
-    def request(self, method: str, url: str) -> str:
+    def serve(self) -> Cup:
         ...
 
 
-class BasicHttpClient(HttpClient):
-    def __init__(self, fail_times: int = 0) -> None:
-        self._fail_times = fail_times
-        self._attempts = 0
+class Espresso(Beverage):
+    """Concrete component. The shot itself. It does not know about add-ons."""
 
-    def request(self, method: str, url: str) -> str:
-        self._attempts += 1
-        # Simulate transient failure for the first N attempts
-        if self._attempts <= self._fail_times:
-            raise OSError(f"transient failure #{self._attempts}")
-        return f"{method} {url} -> 200 OK"
+    def serve(self) -> Cup:
+        print("The barista pulls an espresso.")
+        return Cup("espresso", Decimal("2.00"))
 
 
-class HttpClientDecorator(HttpClient):
-    def __init__(self, inner: HttpClient) -> None:
+class BeverageDecorator(Beverage):
+    """Decorator. Holds the inner drink and keeps the same interface."""
+
+    def __init__(self, inner: Beverage) -> None:
         self._inner = inner
 
-    def request(self, method: str, url: str) -> str:
-        return self._inner.request(method, url)
+    def serve(self) -> Cup:
+        return self._inner.serve()
 
 
-class LoggingClient(HttpClientDecorator):
-    def request(self, method: str, url: str) -> str:
-        print(f"HTTP {method} {url}")
-        result = super().request(method, url)
-        print(f"HTTP done: {result}")
-        return result
+class SteamedMilk(BeverageDecorator):
+    """One add-on. It steams after the inner cup, then adds 0.50."""
+
+    def serve(self) -> Cup:
+        cup = super().serve()
+        print("Milk steams into the cup.")
+        return Cup(f"{cup.name}, steamed milk", cup.price_eur + Decimal("0.50"))
 
 
-class RetryClient(HttpClientDecorator):
-    def __init__(self, inner: HttpClient, attempts: int = 3) -> None:
-        super().__init__(inner)
-        self.attempts = attempts
+class Caramel(BeverageDecorator):
+    """One add-on. Outside the milk, so the drizzle finishes last."""
 
-    def request(self, method: str, url: str) -> str:
-        last_error: Exception | None = None
-        for i in range(self.attempts):
-            try:
-                return super().request(method, url)
-            except OSError as exc:
-                last_error = exc
-                print(f"retry after: {exc}")
-                time.sleep(0.01)
-        raise RuntimeError("retries exhausted") from last_error
+    def serve(self) -> Cup:
+        cup = super().serve()
+        print("Caramel drizzles on top.")
+        return Cup(f"{cup.name}, caramel", cup.price_eur + Decimal("0.70"))
 
 
-class AuthHeaderClient(HttpClientDecorator):
-    def __init__(self, inner: HttpClient, token: str) -> None:
-        super().__init__(inner)
-        self.token = token
-
-    def request(self, method: str, url: str) -> str:
-        print(f"auth Bearer {self.token[:4]}...")
-        return super().request(method, url)
-
-
-def build_client() -> HttpClient:
-    client: HttpClient = BasicHttpClient(fail_times=1)
-    client = AuthHeaderClient(client, token="secret-token")
-    client = RetryClient(client, attempts=3)
-    return LoggingClient(client)
+def order() -> Beverage:
+    """Composition root. The counter stacks wrappers; the classes stay single-purpose."""
+    drink: Beverage = Espresso()
+    drink = SteamedMilk(drink)
+    return Caramel(drink)
 
 
 if __name__ == "__main__":
-    print(build_client().request("GET", "https://probe.example/status"))
+    print("The customer orders again.")
+    cup = order().serve()
+    print(f"{cup.name} — {cup.price_eur} EUR")
 ```
 
 **Expected output (solution):**
 
 ```text
-HTTP GET https://probe.example/status
-auth Bearer secr...
-retry after: transient failure #1
-auth Bearer secr...
-HTTP done: GET https://probe.example/status -> 200 OK
-GET https://probe.example/status -> 200 OK
+The customer orders again.
+The barista pulls an espresso.
+Milk steams into the cup.
+Caramel drizzles on top.
+espresso, steamed milk, caramel — 3.20 EUR
 ```
 
-Notice auth runs per attempt (inside retry), while logging wraps the whole logical call once at the outside—order is a design choice you can see by running.
+Caramel sits outside steamed milk, so the drizzle prints last. Swap the wrappers and the finish order swaps.
 
 ---
 
@@ -301,13 +298,13 @@ Notice auth runs per attempt (inside retry), while logging wraps the whole logic
 
 - Decorators that change the interface “a little”
 - Ignoring call order
-- Copying ProbeAPI names into the actuator lab
+- Copying DailyPour names into the actuator lab
 
 ---
 
 ## 7. Try this
 
-Move `LoggingClient` *inside* `RetryClient` in `build_client` (log per attempt). Re-run and compare how many `HTTP GET` lines you see.
+Wrap so `SteamedMilk` is outside `Caramel`. Re-run. Milk should print after the drizzle. Neither add-on class changes. Only the stack at the counter changes.
 
 ---
 
@@ -336,11 +333,11 @@ Phase 9 stacks cross-cutting policies around an actuator port. Wire the stack in
 
 | Teaching (this guide) | Your lab (greenhouse) |
 | --------------------- | --------------------- |
-| `HttpClient` | `ActuatorPort` (`apply`) |
-| `BasicHttpClient` | Simulation (or vendor) actuator adapter |
-| `LoggingClient` / `RetryClient` | Logging decorator; max-run-time (or lab) policy decorator |
+| `Beverage.serve` | `ActuatorPort` (`apply`) |
+| `Espresso` | Simulation (or vendor) actuator adapter |
+| `SteamedMilk` / `Caramel` | Logging decorator; max-run-time (or lab) policy decorator |
 | Wrapper order | Logging outermost vs policy inner — document it |
-| Console / in-memory client | `actuator_execution_log` rows |
+| Console lines | `actuator_execution_log` rows |
 
 **Do / don’t:** **Do** compose wrappers that share one interface; order matters. **Don’t** nest `if policy` in the router, and don’t give each decorator a different method name.
 
