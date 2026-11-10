@@ -30,7 +30,7 @@ Encapsulate actuator actions as **command objects** with **auditable history** i
 - Phase 9: decorated ports + execution log.
 - Phase 8: transition guards and `allowed_commands`.
 - Sensor readings may arrive from the sampler or MQTT ingest, not only `POST /read`. Do not add a scheduler, MQTT client, or the device readings route in this phase.
-- Commands stay on `device_id`. The zone device list is where the user opens controls. Do not add a second assignment API.
+- Commands stay on `device_id`. Controls live in `#controls`. Do not add a second assignment API.
 
 ---
 
@@ -61,34 +61,35 @@ yourpath\project\
 │   ├── infrastructure/persistence/command_log_repository.py
 │   └── interfaces/api/commands.py
 └── frontend/src/
-    ├── .../ActuatorControls.tsx          # #controls
-    └── .../CommandHistory.tsx
+    └── components/commands/CommandPanel.tsx   # #controls
 ```
 
 ## Type hints
 
 Domain:
 
-| Type | Hint |
-|------|------|
-| `command_type` | `str` — e.g. `start_pump`, `stop_pump`, `set_light_level` |
-| `payload` | `dict` |
-| `status` | `str` — `"success"` \| `"failed"` \| `"rejected"` |
-| `CommandResult` | `status`, optional `error_message: str` |
+| Type            | Hint                                                      |
+| --------------- | --------------------------------------------------------- |
+| `command_type`  | `str` — e.g. `start_pump`, `stop_pump`, `set_light_level` |
+| `payload`       | `dict`                                                    |
+| `status`        | `str` — `"success"` \| `"failed"` \| `"rejected"`         |
+| `CommandResult` | `status`, optional `error_message: str`                   |
 
 ORM `command_log`:
 
-| Column | SQL hint |
-|--------|----------|
-| `id` | UUID PK |
-| `command_type` | VARCHAR |
-| `device_id` | UUID FK → `devices` |
-| `payload` | JSONB |
-| `status` | VARCHAR |
-| `error_message` | TEXT, nullable |
-| `created_at` | timestamptz |
+| Column          | SQL hint            |
+| --------------- | ------------------- |
+| `id`            | UUID PK             |
+| `command_type`  | VARCHAR             |
+| `device_id`     | UUID FK → `devices` |
+| `payload`       | JSONB               |
+| `status`        | VARCHAR             |
+| `error_message` | TEXT, nullable      |
+| `created_at`    | timestamptz         |
 
 POST body JSON: `{ command_type: string, device_id: UUID, payload?: object }`.
+
+GET row JSON: `{ id, command_type, device_id, payload, status, error_message, created_at }`. `status` is `"success"`, `"failed"`, or `"rejected"`.
 
 ---
 
@@ -98,15 +99,15 @@ POST body JSON: `{ command_type: string, device_id: UUID, payload?: object }`.
 
 `command_log`:
 
-| Column | Intent |
-|--------|--------|
-| Identifier | PK |
-| `command_type` | VARCHAR |
-| `device_id` | FK → `devices` |
-| `payload` | JSONB |
-| `status` | `success` / `failed` / `rejected` |
-| `error_message` | Nullable text |
-| `created_at` | Timestamptz |
+| Column          | Intent                            |
+| --------------- | --------------------------------- |
+| Identifier      | PK                                |
+| `command_type`  | VARCHAR                           |
+| `device_id`     | FK → `devices`                    |
+| `payload`       | JSONB                             |
+| `status`        | `success` / `failed` / `rejected` |
+| `error_message` | Nullable text                     |
+| `created_at`    | Timestamptz                       |
 
 Autogenerate and apply.
 
@@ -116,15 +117,17 @@ Acceptance criteria:
 
 ## Step 2 — Command objects
 
-Implement `StartPumpCommand`, `StopPumpCommand`, `SetLightLevelCommand` (names may vary), each with `execute()`.
+Implement `StartPumpCommand`, `StopPumpCommand`, `SetLightLevelCommand` (names may vary), each with `execute(port)`.
 
-Invoker runs a command and does not contain device-specific if-ladders for every type (registry or polymorphism).
+A registry maps the type string to the class. The invoker looks up that class and calls `execute`. It does not branch on `command_type`.
 
-Execute path:
+The application service owns one POST:
 
-1. Validate current state / `allowed_commands`.
-2. If illegal → status `rejected`, no state change, no inner apply (or apply not reached).
-3. If legal → decorated port `apply` → update `actuator_states` → log `success` or `failed`.
+1. A missing device, or a device whose role is not `actuator`, is not found.
+2. An unknown type writes no `command_log` row.
+3. If the type is not in `allowed_commands()` for the saved state, insert `rejected` and stop. No `apply`, no state write.
+4. Otherwise `execute(port)` calls the Phase 9 stack from `build_actuator_port`. `Max run time exceeded` inserts `failed`, leaves `actuator_states` unchanged, and leaves the execution-log row the decorator already wrote.
+5. After a completed apply, save state through `ActuatorContext.transition` only when `target_state` differs from the current state. `set_light_level` on an already `running` light does not transition. Then insert `success`.
 
 Acceptance criteria:
 
@@ -133,10 +136,10 @@ Acceptance criteria:
 
 ## Step 3 — API
 
-- `POST /api/commands` body: command type, device id, optional payload.
-- `GET /api/commands?limit=50`.
+- `POST /api/commands` body: `{ command_type, device_id, payload? }`.
+- `GET /api/commands?limit=50` (1–200), newest first.
 
-404 missing device; 400 unknown command type; rejected can be 409 or 200 with `status=rejected` — pick one, document it, keep it consistent.
+`success` and `failed` return **200** with the log row. `rejected` returns **409** with the same row shape. Unknown `command_type` is **400** and writes no row. A missing device, or a device whose role is not `actuator`, is **404**.
 
 Acceptance criteria:
 
@@ -145,8 +148,9 @@ Acceptance criteria:
 
 ## Step 4 — Frontend
 
-- **Actuator controls** in `#controls`: POST command; disable when `allowed_commands` omits the action.
-- **Command history** from `command_log`.
+- **Actuator controls** in `#controls`: POST command; disable a button when that name is absent from `allowed_commands`.
+- `set_light_level` sends `{ level: 1 }` unless the field is changed.
+- **Command history** from `command_log`. After a click, reload the actuators and the history.
 - Confirm destructive actions if you already have a pattern; otherwise optional Phase 13 can add a dialog.
 
 Acceptance criteria:

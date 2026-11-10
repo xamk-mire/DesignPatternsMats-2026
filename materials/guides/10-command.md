@@ -2,9 +2,9 @@
 
 **Lab:** [Requirements](../../phases/phase-10/requirements.md) · [Guided check](../../phases/phase-10/guided-check.md) · [Questions](../../phases/phase-10/questions.md)
 
-## Chapter 10: "Undo at DraftDesk"
+## Chapter 10: "Undo at GlowTap"
 
-**DraftDesk** is a tiny text editor for support macros. Users type, delete, and hit **Undo**. The first build called `buffer.insert` / `buffer.delete` directly—nothing remembered enough to reverse.
+Evening. **GlowTap** is one smart hall lamp. `Lamp.turn_on()` and `Lamp.turn_off()` change whether it is lit. The first build calls those methods directly, so nothing can reverse the last switch.
 
 You need the **Command** pattern: turn each request into an object that can `execute()` and `undo()`.
 
@@ -19,7 +19,7 @@ By the end of this guide you will be able to:
 - Explain Command as an objectified request
 - Implement execute/undo with a history stack
 - Contrast Command with a plain method call and with Strategy
-- Bridge the idea to Phase 10 without copying DraftDesk types
+- Bridge the idea to Phase 10 without copying GlowTap types
 
 ---
 
@@ -33,15 +33,13 @@ By the end of this guide you will be able to:
 
 ### The problem in plain language
 
-Direct method calls (`buffer.delete(0, 1)`) are ephemeral—no record of what happened, no queue, no undo stack, no audit trail. When operators need **history**, **retry**, or **macro playback**, the caller must remember parameters and inverse operations scattered across the UI and services.
+Direct method calls (`lamp.turn_on()`) are ephemeral—no record of what happened, no queue, no undo stack, no audit trail. When operators need **history**, **retry**, or **macro playback**, the caller must remember parameters and inverse operations scattered across the UI and services.
 
 Actuator control has the same shape: “turn on pump 3” should be loggable, reversible where safe, and compatible with State guards.
 
-### Analogy — restaurant order tickets
+### Analogy — a smart-home remote
 
-In a busy kitchen, waiters do not shout complex instructions that evaporate—they write **tickets**. Each ticket is a command: make dish X for table Y. The kitchen line executes tickets in order; if a dish is wrong, a compensating ticket (void/remake) reverses or replaces work. Tickets can be queued, logged, and replayed.
-
-Software commands are those tickets: objects that capture intent and know how to apply and sometimes reverse it.
+You do not rewire the hall lamp every time you want it on. You press a button on a remote. That button is a request the remote can keep: Undo runs the last presses backward. `Remote.run` calls `execute()`, keeps the command, and `undo()` asks the lamp to reverse.
 
 ### Solution structure
 
@@ -58,17 +56,17 @@ Persist `command_log` for audit; integrate with State so illegal commands fail b
 
 ```mermaid
 sequenceDiagram
-  participant Client
-  participant Invoker
-  participant Command
-  participant Receiver
+  participant Client as Resident
+  participant Invoker as Remote
+  participant Command as TurnOn
+  participant Receiver as Lamp
   Client->>Invoker: run(command)
   Invoker->>Command: execute()
-  Command->>Receiver: mutate state
+  Command->>Receiver: turn_on()
   Note over Invoker: push onto history stack
   Client->>Invoker: undo()
   Invoker->>Command: undo()
-  Command->>Receiver: reverse mutation
+  Command->>Receiver: turn_off()
 ```
 
 ### When to use / when to skip
@@ -95,51 +93,57 @@ sequenceDiagram
 
 # Part 2 — Follow along
 
-> **Follow along:** Stdlib Python only. Run the problem demo, then the complete command script.
+> **Follow along:** Stdlib Python only. Run the problem demo first, then the complete command script.
 
 ## 1. The sticky problem
 
-### 1.1 Smell: mutations with no memory
+Same evening. The resident is in the hall. The switch is a direct call, so nothing remembers it.
+
+### 1.1 Smell: a switch with no memory
 
 ```python
-# Smell: after delete, nothing stores what was removed
-buffer.delete(0, 1)  # how do we undo?
+# The lamp changes, and the request itself is gone.
+lamp.turn_on()  # how do we undo?
 ```
 
 **Root cause:** Invocations are not first-class objects.
 
 ### 1.2 Runnable problem demo
 
-> **Follow along:** Save as `draftdesk_before.py`, run `python draftdesk_before.py`.
+> **Follow along:** Save as `glowtap_before.py`, run `python glowtap_before.py`.
 
 ```python
-"""Problem demo: direct buffer edits cannot undo."""
+"""Evening at GlowTap. The switch is a direct call."""
 
 
-class TextBuffer:
+class Lamp:
+    """Receiver. It only knows how to light or go dark."""
+
     def __init__(self) -> None:
-        self.text = ""
+        self.on = False
 
-    def insert(self, index: int, chunk: str) -> None:
-        self.text = self.text[:index] + chunk + self.text[index:]
+    def turn_on(self) -> None:
+        self.on = True
+        print("The hall lamp is lit.")
 
-    def delete(self, index: int, length: int) -> None:
-        self.text = self.text[:index] + self.text[index + length :]
+    def turn_off(self) -> None:
+        self.on = False
+        print("The hall lamp is dark.")
 
 
 if __name__ == "__main__":
-    buffer = TextBuffer()
-    buffer.insert(0, "Hello")
-    buffer.delete(0, 1)
-    print("now:", repr(buffer.text))
-    print("PAIN: no history — cannot restore the deleted 'H'")
+    lamp = Lamp()
+    print("Evening at GlowTap. The hall lamp is dark.")
+    lamp.turn_on()  # nothing stored the request
+    print("PAIN: no history — cannot undo the switch")
 ```
 
 **Expected output (problem):**
 
 ```text
-now: 'ello'
-PAIN: no history — cannot restore the deleted 'H'
+Evening at GlowTap. The hall lamp is dark.
+The hall lamp is lit.
+PAIN: no history — cannot undo the switch
 ```
 
 ### What goes wrong when requirements change
@@ -150,104 +154,115 @@ Audit logs, queues, and undo all need a *request object*. Plain method calls giv
 
 ## 2. Pattern in practice
 
-The DraftDesk runnable example below wraps buffer edits in command objects with `execute()` and `undo()`, managed by an invoker with a history stack.
+The switch becomes a command. The remote runs it and keeps it. Undo asks the lamp to reverse.
 
 ---
 
 ## 3. Building the solution (step by step)
 
-### Step A — Command interface
+### Step A — A request with execute and undo
 
 ```python
 class Command(ABC):
     @abstractmethod
-    def execute(self) -> None: ...
+    def execute(self) -> None:
+        """Do the switch."""
+        ...
 
     @abstractmethod
-    def undo(self) -> None: ...
+    def undo(self) -> None:
+        """Reverse that same switch."""
+        ...
 ```
 
-### Step B — Store undo data before mutating
+### Step B — TurnOn calls the lamp
 
 ```python
-class DeleteCommand(Command):
+class TurnOn(Command):
+    def __init__(self, lamp: Lamp) -> None:
+        self._lamp = lamp  # the command holds the receiver
+
     def execute(self) -> None:
-        self._deleted = self.buffer.text[self.index : self.index + self.length]
-        self.buffer.delete(self.index, self.length)
+        self._lamp.turn_on()
+
+    def undo(self) -> None:
+        self._lamp.turn_off()  # the opposite switch
 ```
 
-### Step C — Invoker with history
+### Step C — The remote keeps a history
 
 ```python
-class Editor:
+class Remote:
     def run(self, command: Command) -> None:
         command.execute()
-        self._history.append(command)
+        self._history.append(command)  # invoker, not the lamp, remembers
 ```
 
 ---
 
 ## 4. Complete worked solution (runnable)
 
-> **Follow along:** Save as `draftdesk_command.py`, run `python draftdesk_command.py`.
+> **Follow along:** Save as `glowtap_command.py`, run `python glowtap_command.py`.
 
 ```python
-"""Command demo — DraftDesk undo (stdlib only)."""
+"""Later that evening. Two switches, one remote (stdlib only)."""
 
 from abc import ABC, abstractmethod
 
 
-class TextBuffer:
+class Lamp:
+    """Receiver. The lamp changes. It does not remember who asked."""
+
     def __init__(self) -> None:
-        self.text = ""
+        self.on = False
 
-    def insert(self, index: int, chunk: str) -> None:
-        self.text = self.text[:index] + chunk + self.text[index:]
+    def turn_on(self) -> None:
+        self.on = True
+        print("The hall lamp is lit.")
 
-    def delete(self, index: int, length: int) -> None:
-        self.text = self.text[:index] + self.text[index + length :]
+    def turn_off(self) -> None:
+        self.on = False
+        print("The hall lamp is dark.")
 
 
 class Command(ABC):
-    @abstractmethod
-    def execute(self) -> None: ...
+    """Command. A request the remote can run and later reverse."""
 
     @abstractmethod
-    def undo(self) -> None: ...
+    def execute(self) -> None:
+        ...
+
+    @abstractmethod
+    def undo(self) -> None:
+        ...
 
 
-class InsertCommand(Command):
-    def __init__(self, buffer: TextBuffer, index: int, chunk: str) -> None:
-        self.buffer = buffer
-        self.index = index
-        self.chunk = chunk
+class TurnOn(Command):
+    def __init__(self, lamp: Lamp) -> None:
+        self._lamp = lamp
 
     def execute(self) -> None:
-        self.buffer.insert(self.index, self.chunk)
+        self._lamp.turn_on()
 
     def undo(self) -> None:
-        self.buffer.delete(self.index, len(self.chunk))
+        self._lamp.turn_off()
 
 
-class DeleteCommand(Command):
-    def __init__(self, buffer: TextBuffer, index: int, length: int) -> None:
-        self.buffer = buffer
-        self.index = index
-        self.length = length
-        self._deleted = ""
+class TurnOff(Command):
+    def __init__(self, lamp: Lamp) -> None:
+        self._lamp = lamp
 
     def execute(self) -> None:
-        # Capture payload BEFORE mutate — required for undo
-        self._deleted = self.buffer.text[self.index : self.index + self.length]
-        self.buffer.delete(self.index, self.length)
+        self._lamp.turn_off()
 
     def undo(self) -> None:
-        self.buffer.insert(self.index, self._deleted)
+        self._lamp.turn_on()
 
 
-class Editor:
-    def __init__(self, buffer: TextBuffer) -> None:
-        self.buffer = buffer
+class Remote:
+    """Invoker. It runs a command and keeps it for undo."""
+
+    def __init__(self) -> None:
         self._history: list[Command] = []
 
     def run(self, command: Command) -> None:
@@ -257,29 +272,32 @@ class Editor:
     def undo(self) -> None:
         if not self._history:
             return
+        print("Undo.")
         self._history.pop().undo()
 
 
 if __name__ == "__main__":
-    buffer = TextBuffer()
-    editor = Editor(buffer)
-    editor.run(InsertCommand(buffer, 0, "Hello"))
-    print("after insert:", repr(buffer.text))
-    editor.run(DeleteCommand(buffer, 0, 1))
-    print("after delete:", repr(buffer.text))
-    editor.undo()
-    print("after undo:", repr(buffer.text))
-    editor.undo()
-    print("after second undo:", repr(buffer.text))
+    lamp = Lamp()
+    remote = Remote()
+    print("The resident picks up the remote.")
+    remote.run(TurnOn(lamp))
+    remote.run(TurnOff(lamp))
+    remote.undo()
+    remote.undo()
+    print("The remote remembered both switches.")
 ```
 
 **Expected output (solution):**
 
 ```text
-after insert: 'Hello'
-after delete: 'ello'
-after undo: 'Hello'
-after second undo: ''
+The resident picks up the remote.
+The hall lamp is lit.
+The hall lamp is dark.
+Undo.
+The hall lamp is lit.
+Undo.
+The hall lamp is dark.
+The remote remembered both switches.
 ```
 
 ---
@@ -288,13 +306,13 @@ after second undo: ''
 
 - Commands that bypass State guards
 - Forgetting to store undo data before mutating
-- Pasting DraftDesk classes into pump handlers
+- Pasting GlowTap classes into pump handlers
 
 ---
 
 ## 6. Try this
 
-Add `ReplaceCommand(index, length, chunk)`. Run replace then undo twice (or undo once if you compose as one command). Re-run and print the buffer.
+The hall lamp can dim. Add `SetBrightness` that remembers the previous level before changing it, then one undo restores that level. `Remote.run` and `Remote.undo` stay unchanged.
 
 ---
 
@@ -325,10 +343,10 @@ Phase 10 turns operator actions into commands that respect State and may run thr
 
 | Teaching (this guide) | Your lab (greenhouse) |
 | --------------------- | --------------------- |
-| `InsertCommand` / `DeleteCommand` | `StartPumpCommand` / `StopPumpCommand` (lab types) |
+| `TurnOn` / `TurnOff` | `StartPumpCommand` / `StopPumpCommand` (lab types) |
 | `Command.execute()` / `undo()` | `execute()` required; undo is optional extra |
-| `Editor` invoker | `CommandInvoker.submit` |
-| Text buffer mutation | Guard → decorated `ActuatorPort` → state transition → `command_log` |
+| `Remote` invoker | `CommandInvoker.submit` |
+| Lamp switch | Guard → decorated `ActuatorPort` → state transition → `command_log` |
 
 **Do / don’t:** **Do** reject illegal-state commands in the domain and still persist `status=rejected`. **Don’t** implement start/stop in the router with `if command_type ==`, and don’t skip the Phase 9 port stack.
 

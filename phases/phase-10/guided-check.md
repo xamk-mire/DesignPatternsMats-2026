@@ -12,19 +12,18 @@ Complete the [requirements](requirements.md) first. Use this document if you are
 
 ```text
 domain/commands/
-  command.py            # Command ABC
-  start_pump.py
-  stop_pump.py
-  noop.py               # optional
+  base.py               # Command.execute(port)
+  pump.py               # StartPumpCommand, StopPumpCommand
+  light.py              # SetLightLevelCommand
+  invoker.py            # registry + CommandInvoker.run
 application/commands/
-  invoker.py
   dto.py
-  service.py
+  service.py            # guard, state update, command_log
 infrastructure/persistence/
   models.py             # CommandLogRow
   command_log_repository.py
 interfaces/api/commands.py
-frontend/.../CommandPanel.tsx
+frontend/src/components/commands/CommandPanel.tsx   # #controls
 ```
 
 ---
@@ -34,7 +33,7 @@ frontend/.../CommandPanel.tsx
 ```text
 command_log(
   id, device_id FK, command_type, payload JSONB,
-  status,               # accepted | rejected | executed | failed
+  status,               # success | failed | rejected
   error_message, created_at
 )
 ```
@@ -52,24 +51,25 @@ alembic upgrade head
 
 ```python
 class Command(ABC):
-    type: str
-    def execute(self) -> None: ...
+    command_type: str
+    target_state: str | None
+    def execute(self, port: ActuatorPort) -> None: ...
 
-class StartPumpCommand(Command): ...
-class StopPumpCommand(Command): ...
+def command_for(command_type: str, device_id: UUID, payload: dict) -> Command: ...
 
 class CommandInvoker:
-    def submit(self, command: Command) -> CommandLogDto: ...
+    def run(self, command: Command, port: ActuatorPort) -> None:
+        command.execute(port)
 ```
 
-Execute path (implement in invoker / command, not in the router):
+Execute path (application service, not the router):
 
-1. **Guard** — load actuator state; if command not in `allowed_commands` → persist `rejected`, HTTP 409/400, **stop**.
-2. **Port** — `ActuatorPort.apply(...)` (decorated stack from Phase 9).
-3. **State** — legal transition (e.g. start → running, stop → idle).
-4. **Log** — `status=executed` or `failed` with `error_message`.
+1. **Guard** — load actuator state; if `command_type` is not in `allowed_commands()` → persist `rejected`, return **409** with the log row, **stop**. No `apply`, no state write.
+2. **Port** — `execute(port)` calls the Phase 9 stack from `build_actuator_port`.
+3. **State** — after a completed apply, `ActuatorContext.transition` only when `target_state` differs (start → `running`, stop → `idle`). `set_light_level` on an already `running` light does not transition.
+4. **Log** — `status=success`, or `failed` with `error_message` when the decorator raises `Max run time exceeded`. That failure leaves `actuator_states` unchanged and leaves the execution-log row already written.
 
-Unknown `command_type` → 400. Invoker should not contain `if command_type == "start_pump":` business logic — map type → class, then `execute()`.
+Unknown `command_type` → **400** and no `command_log` row. The invoker does not contain `if command_type == "start_pump":`. Map the type string to a class, then `execute(port)`.
 
 **Check:** illegal-state submit writes `rejected` and does **not** change `actuator_states`; legal start changes state to running.
 
@@ -77,15 +77,15 @@ Unknown `command_type` → 400. Invoker should not contain `if command_type == "
 
 ## Step 3 — API
 
-`POST /api/devices/{id}/commands`
+`POST /api/commands`
 
 ```json
-{ "command_type": "start_pump", "payload": {} }
+{ "command_type": "start_pump", "device_id": "<uuid>", "payload": {} }
 ```
 
-Responses: 202/200 + log DTO; 409 illegal state; 404 missing device; 400 unknown type.
+Responses: **200** with the log row for `success` and `failed`; **409** with the log row for `rejected`; **404** missing device or a device that is not an actuator; **400** unknown type and no row.
 
-`GET /api/commands?limit=20` — newest first.
+`GET /api/commands?limit=50` — newest first. `limit` is 1–200. Each row is `{ id, command_type, device_id, payload, status, error_message, created_at }`.
 
 **Check:** Scalar shows both routes; rejected POST still appears on GET.
 
@@ -93,9 +93,9 @@ Responses: 202/200 + log DTO; 409 illegal state; 404 missing device; 400 unknown
 
 ## Step 4 — Frontend
 
-`#commands`: disabled buttons from `allowed_commands`; POST on click; last result; recent log table. Confirm dialog optional until Phase 13.
+`#controls`: show `start_pump`, `stop_pump`, and `set_light_level`. Disable a button when that name is absent from `allowed_commands`. `set_light_level` sends `{ "level": 1 }` unless the field is changed. After a click, reload the actuators and the history table. Confirm dialog optional until Phase 13.
 
-**Check:** button disabled when command not allowed; after start, stop becomes available (via refreshed `allowed_commands`).
+**Check:** button disabled when command not allowed; after a successful start, stop becomes available (via refreshed `allowed_commands`) and the history shows `success`.
 
 ---
 
@@ -118,12 +118,12 @@ Responses: 202/200 + log DTO; 409 illegal state; 404 missing device; 400 unknown
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| Router implements start/stop | Command object + invoker |
-| Rejected command not in history | Insert `command_log` before returning 409 |
-| State changes on reject | Guard first; save state only after success |
-| Decorators skipped | Call `ActuatorPort`, not a raw adapter |
+| Symptom                         | Fix                                        |
+| ------------------------------- | ------------------------------------------ |
+| Router implements start/stop    | Command object + invoker                   |
+| Rejected command not in history | Insert `command_log` before returning 409  |
+| State changes on reject         | Guard first; save state only after success |
+| Decorators skipped              | Call `ActuatorPort`, not a raw adapter     |
 
 ---
 
